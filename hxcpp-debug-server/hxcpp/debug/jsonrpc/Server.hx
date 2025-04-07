@@ -235,24 +235,11 @@ class Server {
 	}
 
 	private function generateFilePathMaps() {
-		#if scriptable
-		var isUpdate = path2file.keys().hasNext();
-		var relativeSourceWarningShown = false;
-		#end
 		var fullPathes = Debugger.getFilesFullPath();
 		var files = Debugger.getFiles();
 		for (i in 0...files.length) {
 			var file = files[i];
 			var path = fullPathes[i];
-
-			#if scriptable
-			if (isUpdate && !path2file.exists(path2Key(path)) && !haxe.io.Path.isAbsolute(path) && !relativeSourceWarningShown) {
-				log("Warning: cppia script was loaded containing relative source file paths."
-					+ " Make sure the script is compiled with -D cppia.absolute-source-paths");
-				relativeSourceWarningShown = true;
-			}
-			#end
-
 			path2file[path2Key(path)] = file;
 			file2path[path2Key(file)] = path;
 		}
