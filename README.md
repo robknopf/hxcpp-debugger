@@ -1,6 +1,6 @@
 # HXCPP Debugger
 
-[![CI](https://img.shields.io/github/workflow/status/vshaxe/hxcpp-debugger/CI.svg?logo=github)](https://github.com/vshaxe/hxcpp-debugger/actions?query=workflow%3ACI) [![Version](https://vsmarketplacebadge.apphb.com/version-short/vshaxe.hxcpp-debugger.svg)](https://marketplace.visualstudio.com/items?itemName=vshaxe.hxcpp-debugger) [![Installs](https://vsmarketplacebadge.apphb.com/installs-short/vshaxe.hxcpp-debugger.svg)](https://marketplace.visualstudio.com/items?itemName=vshaxe.hxcpp-debugger)
+[![CI](https://img.shields.io/github/workflow/status/vshaxe/hxcpp-debugger/CI.png?logo=github)](https://github.com/vshaxe/hxcpp-debugger/actions?query=workflow%3ACI) [![Version](https://vsmarketplacebadge.apphb.com/version-short/vshaxe.hxcpp-debugger.png)](https://marketplace.visualstudio.com/items?itemName=vshaxe.hxcpp-debugger) [![Installs](https://vsmarketplacebadge.apphb.com/installs-short/vshaxe.hxcpp-debugger.png)](https://marketplace.visualstudio.com/items?itemName=vshaxe.hxcpp-debugger)
 
 This VSCode extension allows you to debug [HXCPP](https://haxe.org/manual/target-cpp-getting-started.html) applications.
 
