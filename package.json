@@ -40,7 +40,8 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "haxe build.hxml",
-		"postinstall": "lix download"
+		"postinstall": "lix download",
+		"createvsix":"npx @vscode/vsce package"
 	},
 	"main": "bin/extension.js",
 	"activationEvents": [
