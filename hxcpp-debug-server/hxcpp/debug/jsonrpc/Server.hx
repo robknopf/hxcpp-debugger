@@ -115,40 +115,11 @@ class Server {
 		mappedBreakpointIds = new Map<Int, Int>();
 		missedBreakpoints = new Map<String, Array<BreakpointInfo>>();
 
-		#if (hxcpp_api_level >= 500)
-		Debugger.setOnScriptLoadedFunction(function() {
-			generateFilePathMaps();
-
-			for (file in missedBreakpoints.keys()) {
-				if (!path2file.exists(file)) {
-					// file is still not found
-					continue;
-				}
-
-				var added = [];
-
-				for (rm in breakpoints[file]) {
-					#if scriptable
-					if (mappedBreakpointIds.exists(rm.id))
-						Debugger.deleteBreakpoint(mappedBreakpointIds[rm.id]);
-					else
-					#end
-					Debugger.deleteBreakpoint(rm.id);
-				}
-
-				for (bInfo in missedBreakpoints[file]) {
-					var id = Debugger.addFileLineBreakpoint(path2file[file], bInfo.line);
-					bInfo.internalId = id;
-					mappedBreakpointIds[id] = bInfo.id;
-				}
-
-				breakpoints[file] = added;
-				missedBreakpoints.remove(file);
+		(untyped __global__.__hxcpp_dbg_setOnScriptLoadedFunction)(function() {
+			for (f in Debugger.getFiles()) {
+				resolveSourcePath(f);
 			}
 		});
-		#else
-		log("Please use Haxe 5 to debug with CPPIA");
-		#end
 		#end
 
 		if (connect()) {
@@ -361,7 +332,12 @@ class Server {
 							continue;
 						}
 					}
-					var id = Debugger.addFileLineBreakpoint(path2file[path2Key(params.file)], bInfo.line);
+							var shortName = path2file[path2Key(params.file)];
+					#if scriptable
+					if (shortName == null)
+						shortName = resolveFullToShortName(params.file);
+					#end
+					var id = Debugger.addFileLineBreakpoint(shortName, bInfo.line);
 					#if scriptable
 					if (id == -1) {
 						bInfo.id = nextMappedBreakpointId--;
@@ -566,7 +542,7 @@ class Server {
 						m.result.unshift({
 							id: i++,
 							name: '${s.className}.${s.functionName}',
-							source: file2path[path2Key(s.fileName)],
+							source: resolveSourcePath(s.fileName),
 							line: s.lineNumber,
 							column: 0,
 							artificial: false
@@ -626,7 +602,7 @@ class Server {
 					sendEvent(Protocol.PauseStop, {threadId: threadNumber});
 				} else if (currentThreadInfo.status == ThreadInfo.STATUS_STOPPED_BREAKPOINT) {
 					var bId = currentThreadInfo.breakpoint;
-					var path = file2path[path2Key(fileName)];
+					var path = resolveSourcePath(fileName);
 					var thisFileBreakpoints = breakpoints[path2Key(path)];
 					for (b in thisFileBreakpoints) {
 						if (b.id != bId)
@@ -668,6 +644,125 @@ class Server {
 			socket.close();
 			socket = null;
 		}
+	}
+
+	// hxcpp 4.x: CPPIA files are registered with only their short filename
+	// (e.g. "MainScript.hx") — getScriptableFilesFullPath returns the same
+	// short name, so file2path never resolves them to a full path.  This
+	// method falls back to searching HXCPP_CPPIA_SOURCE_ROOTS (colon-separated,
+	// absolute or relative to Sys.getCwd()) at the time the stack frame is
+	// requested, which is after the CPPIA module is loaded.
+	private static var cppiaSourceRoots:Array<String> = null;
+
+	// Given a full absolute path (as sent by VS Code), check if it lives under
+	// any CPPIA source root and return the short name registered with hxcpp.
+	// Returns null if the path doesn't match any root.
+	private function resolveFullToShortName(fullPath:String):String {
+		if (cppiaSourceRoots == null) {
+			var def = Macro.getDefinedValue("HXCPP_CPPIA_SOURCE_ROOTS", "");
+			if (def == "") {
+				cppiaSourceRoots = [];
+			} else {
+				var cwd = Sys.getCwd();
+				cppiaSourceRoots = def.split(":").map(function(r) {
+					return (r.charAt(0) == "/") ? r : haxe.io.Path.join([cwd, r]);
+				});
+			}
+		}
+		for (root in cppiaSourceRoots) {
+			var prefix = StringTools.endsWith(root, "/") ? root : root + "/";
+			if (StringTools.startsWith(fullPath, prefix)) {
+				var shortName = fullPath.substr(prefix.length);
+				// cache both directions
+				file2path[path2Key(shortName)] = fullPath;
+				path2file[path2Key(fullPath)] = shortName;
+				return shortName;
+			}
+		}
+		return null;
+	}
+
+	private function resolveSourcePath(fileName:String):String {
+		var mapped = file2path[path2Key(fileName)];
+		// If the map has a real path (not just the same short name), use it —
+		// but still check for missed breakpoints that need to be applied.
+		if (mapped != null && mapped != fileName) {
+			#if scriptable
+			var key = path2Key(mapped);
+			if (missedBreakpoints.exists(key)) {
+				var pending = missedBreakpoints[key];
+				var applied:Array<BreakpointInfo> = [];
+				for (bInfo in pending) {
+					var id = Debugger.addFileLineBreakpoint(fileName, bInfo.line);
+					if (id != -1) {
+						bInfo.internalId = id;
+						mappedBreakpointIds[id] = bInfo.id;
+					}
+					applied.push(bInfo);
+				}
+				if (breakpoints.exists(key)) {
+					for (b in breakpoints[key]) {
+						for (a in applied) {
+							if (b.id == a.id)
+								b.internalId = a.internalId;
+						}
+					}
+				}
+				missedBreakpoints.remove(key);
+			}
+			#end
+			return mapped;
+		}
+
+		// Lazy-initialise the search roots from the compile-time define.
+		if (cppiaSourceRoots == null) {
+			var def = Macro.getDefinedValue("HXCPP_CPPIA_SOURCE_ROOTS", "");
+			if (def == "") {
+				cppiaSourceRoots = [];
+			} else {
+				var cwd = Sys.getCwd();
+				cppiaSourceRoots = def.split(":").map(function(r) {
+					return (r.charAt(0) == "/") ? r : haxe.io.Path.join([cwd, r]);
+				});
+			}
+		}
+
+		for (root in cppiaSourceRoots) {
+			var candidate = haxe.io.Path.join([root, fileName]);
+			if (sys.FileSystem.exists(candidate)) {
+				// Cache so subsequent frames are instant.
+				file2path[path2Key(fileName)] = candidate;
+				path2file[path2Key(candidate)] = fileName;
+				// Apply any breakpoints that VS Code set before the CPPIA script loaded.
+				#if scriptable
+				var key = path2Key(candidate);
+				if (missedBreakpoints.exists(key)) {
+					var pending = missedBreakpoints[key];
+					var applied:Array<BreakpointInfo> = [];
+					for (bInfo in pending) {
+						var id = Debugger.addFileLineBreakpoint(fileName, bInfo.line);
+						if (id != -1) {
+							bInfo.internalId = id;
+							mappedBreakpointIds[id] = bInfo.id;
+						}
+						applied.push(bInfo);
+					}
+					if (breakpoints.exists(key)) {
+						for (b in breakpoints[key]) {
+							for (a in applied) {
+								if (b.id == a.id)
+									b.internalId = a.internalId;
+							}
+						}
+					}
+					missedBreakpoints.remove(key);
+				}
+				#end
+				return candidate;
+			}
+		}
+
+		return mapped; // give back whatever we had (may be null)
 	}
 
 	function path2Key(path:String):String {
