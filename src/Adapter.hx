@@ -14,6 +14,8 @@ typedef HxppLaunchRequestArguments = LaunchRequestArguments & {
 	var program:String;
 	var ?cwd:String;
 	var ?args:Array<String>;
+	/** Merged into process.env for the spawned debuggee (null values unset). */
+	var ?env:Dynamic;
 }
 
 @:keep
@@ -51,11 +53,27 @@ class Adapter extends DebugSession {
 		loop();
 	}
 
+	/** launch.json env merged onto the adapter process environment. */
+	static function mergeLaunchEnv(launchEnv:Dynamic):Dynamic {
+		var env:Dynamic = js.Syntax.code("Object.assign({}, process.env)");
+		if (launchEnv == null)
+			return env;
+		for (name in Reflect.fields(launchEnv)) {
+			var value:Dynamic = Reflect.field(launchEnv, name);
+			if (value == null)
+				js.Syntax.code("delete {0}[{1}]", env, name);
+			else
+				Reflect.setField(env, name, Std.string(value));
+		}
+		return env;
+	}
+
 	override function launchRequest(response:LaunchResponse, args:LaunchRequestArguments) {
 		var args:HxppLaunchRequestArguments = cast args;
 		var executable = args.program;
 		var arguments = args.args;
 		var cwd = args.cwd;
+		var launchEnv = args.env;
 
 		function onConnected(socket) {
 			trace("Debug server connected!");
@@ -76,8 +94,13 @@ class Adapter extends DebugSession {
 
 		var server = Net.createServer(onConnected);
 		server.listen(6972, function() {
-			var haxeProcess = ChildProcess.spawn(executable, arguments != null ? arguments : [],
-				{stdio: Pipe, cwd: cwd != null ? cwd : haxe.io.Path.directory(executable)});
+			var spawnOpts:Dynamic = {
+				stdio: Pipe,
+				cwd: cwd != null ? cwd : haxe.io.Path.directory(executable),
+			};
+			if (launchEnv != null)
+				spawnOpts.env = mergeLaunchEnv(launchEnv);
+			var haxeProcess = ChildProcess.spawn(executable, arguments != null ? arguments : [], spawnOpts);
 			haxeProcess.stdout.on(ReadableEvent.Data, onStdout);
 			haxeProcess.stderr.on(ReadableEvent.Data, onStderr);
 			haxeProcess.on(ChildProcessEvent.Exit, onExit);

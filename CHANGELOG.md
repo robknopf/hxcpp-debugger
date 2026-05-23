@@ -1,3 +1,8 @@
+### 1.2.5 (unreleased)
+
+- launch configs accept `env` (merged into the spawned debuggee process)
+- CPPIA source roots resolve relative to executable dir; optional `HXCPP_CPPIA_SOURCE_ROOTS` env
+
 ### 1.2.4 (April 11, 2019)
 
 - fixed removal of breakpoints

@@ -1,7 +1,7 @@
 {
 	"name": "hxcpp-debugger",
 	"displayName": "HXCPP Debugger",
-	"version": "1.2.4",
+	"version": "1.2.5",
 	"publisher": "vshaxe",
 	"license": "MIT",
 	"description": "Debugger for Haxe/HXCPP applications",
@@ -81,6 +81,13 @@
 								"type": "array",
 								"description": "arguments for the executable",
 								"default": []
+							},
+							"env": {
+								"type": "object",
+								"description": "Environment variables merged into the debuggee process (e.g. HXCPP_CPPIA_SOURCE_ROOTS). Use null to unset.",
+								"additionalProperties": {
+									"type": ["string", "null"]
+								}
 							},
 							"receiveAdapterOutput": {
 								"type": "boolean",
