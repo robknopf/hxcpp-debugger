@@ -1,6 +1,6 @@
 ### 1.2.5 (unreleased)
 
-- added CPPIA script breakpoint support (deferred registration when scripts load; hxcpp 4.x via `__hxcpp_dbg_setOnScriptLoadedFunction`)
+- added CPPIA script breakpoint support (deferred registration when scripts load; hxcpp 4.x via `__hxcpp_dbg_setOnScriptLoadedFunction`, Haxe 5 via `generateFilePathMaps()` on script load — requires hxcpp with ungated script-loaded callback)
 - CPPIA source roots resolve relative to executable dir; optional `HXCPP_CPPIA_SOURCE_ROOTS` env
 - warn once when CPPIA scripts use relative source paths (Haxe 5 emits absolute debug paths by default)
 - launch configs accept `args`, `cwd`, and `env` (merged into the spawned debuggee process)

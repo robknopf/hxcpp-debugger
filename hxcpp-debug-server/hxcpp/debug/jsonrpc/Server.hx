@@ -116,6 +116,10 @@ class Server {
 		missedBreakpoints = new Map<String, Array<BreakpointInfo>>();
 
 		(untyped __global__.__hxcpp_dbg_setOnScriptLoadedFunction)(function() {
+			// Haxe 5 / absolute debug paths: refresh path2file from getFilesFullPath().
+			generateFilePathMaps();
+			replayMissedBreakpoints();
+			// hxcpp 4.x / short CPPIA names: resolve via HXCPP_CPPIA_SOURCE_ROOTS.
 			for (f in Debugger.getFiles()) {
 				resolveSourcePath(f);
 			}
@@ -733,34 +737,48 @@ class Server {
 		return null;
 	}
 
+	#if scriptable
+	function applyPendingBreakpoints(sourceKey:String, hxcppFileName:String) {
+		if (!missedBreakpoints.exists(sourceKey))
+			return;
+
+		var pending = missedBreakpoints[sourceKey];
+		var applied:Array<BreakpointInfo> = [];
+		for (bInfo in pending) {
+			var id = Debugger.addFileLineBreakpoint(hxcppFileName, bInfo.line);
+			if (id != -1) {
+				bInfo.internalId = id;
+				mappedBreakpointIds[id] = bInfo.id;
+			}
+			applied.push(bInfo);
+		}
+		if (breakpoints.exists(sourceKey)) {
+			for (b in breakpoints[sourceKey]) {
+				for (a in applied) {
+					if (b.id == a.id)
+						b.internalId = a.internalId;
+				}
+			}
+		}
+		missedBreakpoints.remove(sourceKey);
+	}
+
+	function replayMissedBreakpoints() {
+		for (fileKey in missedBreakpoints.keys()) {
+			if (!path2file.exists(fileKey))
+				continue;
+			applyPendingBreakpoints(fileKey, path2file[fileKey]);
+		}
+	}
+	#end
+
 	private function resolveSourcePath(fileName:String):String {
 		var mapped = file2path[path2Key(fileName)];
 		// If the map has a real path (not just the same short name), use it —
 		// but still check for missed breakpoints that need to be applied.
 		if (mapped != null && mapped != fileName) {
 			#if scriptable
-			var key = path2Key(mapped);
-			if (missedBreakpoints.exists(key)) {
-				var pending = missedBreakpoints[key];
-				var applied:Array<BreakpointInfo> = [];
-				for (bInfo in pending) {
-					var id = Debugger.addFileLineBreakpoint(fileName, bInfo.line);
-					if (id != -1) {
-						bInfo.internalId = id;
-						mappedBreakpointIds[id] = bInfo.id;
-					}
-					applied.push(bInfo);
-				}
-				if (breakpoints.exists(key)) {
-					for (b in breakpoints[key]) {
-						for (a in applied) {
-							if (b.id == a.id)
-								b.internalId = a.internalId;
-						}
-					}
-				}
-				missedBreakpoints.remove(key);
-			}
+			applyPendingBreakpoints(path2Key(mapped), fileName);
 			#end
 			return mapped;
 		}
@@ -771,30 +789,8 @@ class Server {
 				// Cache so subsequent frames are instant.
 				file2path[path2Key(fileName)] = candidate;
 				path2file[path2Key(candidate)] = fileName;
-				// Apply any breakpoints that VS Code set before the CPPIA script loaded.
 				#if scriptable
-				var key = path2Key(candidate);
-				if (missedBreakpoints.exists(key)) {
-					var pending = missedBreakpoints[key];
-					var applied:Array<BreakpointInfo> = [];
-					for (bInfo in pending) {
-						var id = Debugger.addFileLineBreakpoint(fileName, bInfo.line);
-						if (id != -1) {
-							bInfo.internalId = id;
-							mappedBreakpointIds[id] = bInfo.id;
-						}
-						applied.push(bInfo);
-					}
-					if (breakpoints.exists(key)) {
-						for (b in breakpoints[key]) {
-							for (a in applied) {
-								if (b.id == a.id)
-									b.internalId = a.internalId;
-							}
-						}
-					}
-					missedBreakpoints.remove(key);
-				}
+				applyPendingBreakpoints(path2Key(candidate), fileName);
 				#end
 				return candidate;
 			}
