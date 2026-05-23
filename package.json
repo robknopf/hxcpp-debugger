@@ -9,7 +9,7 @@
 		"name": "vshaxe"
 	},
 	"engines": {
-		"vscode": "^1.36.0"
+		"vscode": "^1.75.0"
 	},
 	"categories": [
 		"Debuggers"
@@ -44,9 +44,6 @@
 		"createvsix":"npx @vscode/vsce package"
 	},
 	"main": "bin/extension.js",
-	"activationEvents": [
-		"*"
-	],
 	"contributes": {
 		"commands": [
 			{

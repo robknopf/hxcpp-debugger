@@ -1,7 +1,17 @@
 ### 1.2.5 (unreleased)
 
-- launch configs accept `env` (merged into the spawned debuggee process)
+- added CPPIA script breakpoint support (deferred registration when scripts load; hxcpp 4.x via `__hxcpp_dbg_setOnScriptLoadedFunction`)
 - CPPIA source roots resolve relative to executable dir; optional `HXCPP_CPPIA_SOURCE_ROOTS` env
+- warn once when CPPIA scripts use relative source paths (Haxe 5 emits absolute debug paths by default)
+- launch configs accept `args`, `cwd`, and `env` (merged into the spawned debuggee process)
+- fixed debugger initialization order to match the Debug Adapter Protocol ([#24](https://github.com/vshaxe/hxcpp-debugger/issues/24))
+- fixed UTF-8 handling in debug server socket writes ([#31](https://github.com/vshaxe/hxcpp-debugger/issues/31))
+- fixed compilation with Haxe 5 ([#41](https://github.com/vshaxe/hxcpp-debugger/issues/41))
+- fixed debug server macro injection with Haxe 5 ([#40](https://github.com/vshaxe/hxcpp-debugger/issues/40))
+- fixed deprecation warnings with Haxe 4.2+ ([#28](https://github.com/vshaxe/hxcpp-debugger/issues/28))
+- fixed `@:enum` abstract deprecation warnings in the debug server
+- fixed launch config schema types (`bool` → `boolean`) ([#25](https://github.com/vshaxe/hxcpp-debugger/issues/25))
+- require VS Code 1.75+ (removed redundant `activationEvents`)
 
 ### 1.2.4 (April 11, 2019)
 
