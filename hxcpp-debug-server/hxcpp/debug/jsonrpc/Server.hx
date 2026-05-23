@@ -648,28 +648,79 @@ class Server {
 
 	// hxcpp 4.x: CPPIA files are registered with only their short filename
 	// (e.g. "MainScript.hx") — getScriptableFilesFullPath returns the same
-	// short name, so file2path never resolves them to a full path.  This
-	// method falls back to searching HXCPP_CPPIA_SOURCE_ROOTS (colon-separated,
-	// absolute or relative to Sys.getCwd()) at the time the stack frame is
-	// requested, which is after the CPPIA module is loaded.
+	// short name, so file2path never resolves them to a full path.  These
+	// helpers search HXCPP_CPPIA_SOURCE_ROOTS (colon-separated) to map between
+	// VS Code absolute paths and the short names hxcpp knows about.
+	//
+	// Search list is built once, lazily, after the CPPIA module is loaded:
+	//   1. compile-time -D HXCPP_CPPIA_SOURCE_ROOTS
+	//   2. runtime env HXCPP_CPPIA_SOURCE_ROOTS (merged additively)
+	// Relative entries in either list resolve against the executable directory
+	// (dirname of Sys.programPath()), like $ORIGIN / DT_RUNPATH — not cwd.
 	private static var cppiaSourceRoots:Array<String> = null;
+
+	static function isAbsoluteSourceRoot(path:String):Bool {
+		if (path.length == 0)
+			return false;
+		if (path.charAt(0) == "/")
+			return true;
+		// Windows: C:/foo or C:\foo
+		return Sys.systemName() == "Windows" && path.length >= 2 && path.charAt(1) == ":";
+	}
+
+	static function parseSourceRootList(def:String):Array<String> {
+		if (def == null || def == "")
+			return [];
+		return def.split(":").filter(function(r) return r.length > 0);
+	}
+
+	static function resolveSourceRootList(def:String, origin:String):Array<String> {
+		var resolved:Array<String> = [];
+		for (r in parseSourceRootList(def)) {
+			var path = isAbsoluteSourceRoot(r)
+				? haxe.io.Path.normalize(r)
+				: haxe.io.Path.normalize(haxe.io.Path.join([origin, r]));
+			resolved.push(path);
+		}
+		return resolved;
+	}
+
+	static function ensureCppiaSourceRoots():Array<String> {
+		if (cppiaSourceRoots != null)
+			return cppiaSourceRoots;
+
+		// $ORIGIN equivalent — anchor for relative compile-time / env roots.
+		var origin = haxe.io.Path.normalize(haxe.io.Path.directory(Sys.programPath()));
+
+		var compileTimeDef = Macro.getDefinedValue("HXCPP_CPPIA_SOURCE_ROOTS", "");
+		var envDef = Sys.getEnv("HXCPP_CPPIA_SOURCE_ROOTS");
+
+		var roots:Array<String> = [];
+		var seen = new Map<String, Bool>();
+
+		function addList(def:String) {
+			for (root in resolveSourceRootList(def, origin)) {
+				var key = Sys.systemName() == "Windows" ? root.toUpperCase() : root;
+				if (seen.exists(key))
+					continue;
+				seen.set(key, true);
+				roots.push(root);
+			}
+		}
+
+		addList(compileTimeDef);
+		if (envDef != null && envDef != "")
+			addList(envDef);
+
+		cppiaSourceRoots = roots;
+		return cppiaSourceRoots;
+	}
 
 	// Given a full absolute path (as sent by VS Code), check if it lives under
 	// any CPPIA source root and return the short name registered with hxcpp.
 	// Returns null if the path doesn't match any root.
 	private function resolveFullToShortName(fullPath:String):String {
-		if (cppiaSourceRoots == null) {
-			var def = Macro.getDefinedValue("HXCPP_CPPIA_SOURCE_ROOTS", "");
-			if (def == "") {
-				cppiaSourceRoots = [];
-			} else {
-				var cwd = Sys.getCwd();
-				cppiaSourceRoots = def.split(":").map(function(r) {
-					return (r.charAt(0) == "/") ? r : haxe.io.Path.join([cwd, r]);
-				});
-			}
-		}
-		for (root in cppiaSourceRoots) {
+		for (root in ensureCppiaSourceRoots()) {
 			var prefix = StringTools.endsWith(root, "/") ? root : root + "/";
 			if (StringTools.startsWith(fullPath, prefix)) {
 				var shortName = fullPath.substr(prefix.length);
@@ -714,20 +765,7 @@ class Server {
 			return mapped;
 		}
 
-		// Lazy-initialise the search roots from the compile-time define.
-		if (cppiaSourceRoots == null) {
-			var def = Macro.getDefinedValue("HXCPP_CPPIA_SOURCE_ROOTS", "");
-			if (def == "") {
-				cppiaSourceRoots = [];
-			} else {
-				var cwd = Sys.getCwd();
-				cppiaSourceRoots = def.split(":").map(function(r) {
-					return (r.charAt(0) == "/") ? r : haxe.io.Path.join([cwd, r]);
-				});
-			}
-		}
-
-		for (root in cppiaSourceRoots) {
+		for (root in ensureCppiaSourceRoots()) {
 			var candidate = haxe.io.Path.join([root, fileName]);
 			if (sys.FileSystem.exists(candidate)) {
 				// Cache so subsequent frames are instant.
