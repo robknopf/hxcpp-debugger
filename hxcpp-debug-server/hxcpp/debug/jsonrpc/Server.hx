@@ -20,6 +20,7 @@ import hxcpp.debug.jsonrpc.eval.Interp;
 #if haxe4 enum #else @:enum #end abstract ScopeId(String) to String {
 	var members = "Members";
 	var locals = "Locals";
+	var globals = "Globals";
 }
 
 typedef BreakpointInfo = {
@@ -83,6 +84,8 @@ class Server {
 	var interp:Interp;
 	var parser:Parser;
 	var isWindows:Bool;
+	var globalsStructure:Dynamic;
+	var globalsScopeValue:Value;
 
 	static var startQueue:Deque<Bool> = new Deque<Bool>();
 	@:keep static var inst = {
@@ -119,6 +122,7 @@ class Server {
 			// Haxe 5 / absolute debug paths: refresh path2file from getFilesFullPath().
 			generateFilePathMaps();
 			replayMissedBreakpoints();
+			refreshGlobals();
 			// hxcpp 4.x / short CPPIA names: resolve via HXCPP_CPPIA_SOURCE_ROOTS.
 			for (f in Debugger.getFiles()) {
 				resolveSourcePath(f);
@@ -226,35 +230,7 @@ class Server {
 		Debugger.breakNow(true);
 
 		generateFilePathMaps();
-
-		var classes = Debugger.getClasses();
-		@:privateAccess Interp.globals = new Map<String, Dynamic>();
-		// globals declared inside hxcpp library not exposed to classes
-		Interp.globals.set("Math", Math);
-		Interp.globals.set("String", String);
-
-		var appStructure = {};
-		for (c in classes) {
-			var pack = c.split(".");
-			var klass = Type.resolveClass(c);
-			var globalValue = klass;
-			var currentNode = appStructure;
-
-			var globalName = pack.pop();
-			while (pack.length > 0) {
-				var pathPart = pack.shift();
-				if (!Reflect.hasField(currentNode, pathPart)) {
-					Reflect.setField(currentNode, pathPart, {});
-				}
-				currentNode = Reflect.field(currentNode, pathPart);
-			}
-			Reflect.setField(currentNode, globalName, globalValue);
-		}
-
-		for (key in Reflect.fields(appStructure)) {
-			var value = Reflect.field(appStructure, key);
-			Interp.globals.set(key, value);
-		}
+		refreshGlobals();
 
 		startQueue.push(true);
 		while (true) {
@@ -409,6 +385,11 @@ class Server {
 							localsVals.push(Debugger.getStackVariableValue(threadId, frameId, varName, false));
 						}
 					}
+
+					if (globalsScopeValue != null) {
+						var globalsId = references.create(globalsScopeValue);
+						m.result.push({id: globalsId, name: ScopeId.globals});
+					}
 				}
 				stateMutex.release();
 
@@ -506,7 +487,9 @@ class Server {
 				if (currentThreadInfo != null) {
 					var threadId = currentThreadInfo.number;
 					var frameId = m.params.frameId;
-					var v = VariablesPrinter.evaluate(parser, expr, threadId, frameId);
+					var frame = getUserStackFrame(frameId);
+					var sourceFile = frame != null ? frame.fileName : null;
+					var v = VariablesPrinter.evaluate(parser, expr, threadId, frameId, globalsStructure, sourceFile);
 
 					if (v != null) {
 						m.result.type = v.type;
@@ -607,16 +590,30 @@ class Server {
 				} else if (currentThreadInfo.status == ThreadInfo.STATUS_STOPPED_BREAKPOINT) {
 					var bId = currentThreadInfo.breakpoint;
 					var path = resolveSourcePath(fileName);
-					var thisFileBreakpoints = breakpoints[path2Key(path)];
-					for (b in thisFileBreakpoints) {
-						if (b.id != bId)
-							continue;
+					var pathKey = path != null ? path2Key(path) : path2Key(fileName);
+					var thisFileBreakpoints = breakpoints.exists(pathKey) ? breakpoints[pathKey] : null;
+					if (thisFileBreakpoints != null) {
+						for (b in thisFileBreakpoints) {
+							#if scriptable
+							var matchesId = b.id == bId
+								|| (b.internalId != null && b.internalId == bId);
+							#else
+							var matchesId = b.id == bId;
+							#end
+							if (!matchesId)
+								continue;
 
-						interp = VariablesPrinter.initInterp(threadNumber, getTopFrame(), true);
-						if (b.condition != null) {
-							if (!isConditionPass(b.condition)) {
-								Debugger.continueThreads(threadNumber, 1);
-								return;
+							// Only evaluate conditions here. Unconditional cppia stops must
+							// not walk the stack — can segfault (hxSehException).
+							if (b.condition != null) {
+								try {
+									interp = VariablesPrinter.initInterp(threadNumber, getTopFrame(), true,
+										globalsStructure, fileName);
+									if (!isConditionPass(b.condition)) {
+										Debugger.continueThreads(threadNumber, 1);
+										return;
+									}
+								} catch (_:Dynamic) {}
 							}
 						}
 					}
@@ -641,6 +638,88 @@ class Server {
 	function getTopFrame():Int {
 		// top of stack, minus cpp.vm.Debugger and jsonrpc.Server frames
 		return (currentThreadInfo != null) ? currentThreadInfo.stack.length - 3 : -1;
+	}
+
+	function getUserStackFrame(frameId:Int):Null<StackFrame> {
+		if (currentThreadInfo == null)
+			return null;
+
+		var i = 0;
+		for (s in currentThreadInfo.stack) {
+			if (s.fileName == "hxcpp/debug/jsonrpc/Server.hx")
+				break;
+			if (i == frameId)
+				return s;
+			i++;
+		}
+		return null;
+	}
+
+	function refreshGlobals() {
+		var classes = Debugger.getClasses();
+		@:privateAccess Interp.globals = new Map<String, Dynamic>();
+		Interp.globals.set("Math", Math);
+		Interp.globals.set("String", String);
+
+		var appStructure = {};
+		for (c in classes) {
+			var klass = Type.resolveClass(c);
+			if (klass == null)
+				continue;
+
+			if (StringTools.endsWith(c, "_Fields_")) {
+				mergeModuleFields(appStructure, c, klass);
+				continue;
+			}
+
+			var pack = c.split(".");
+			var globalName = pack.pop();
+			var currentNode = appStructure;
+			while (pack.length > 0) {
+				var pathPart = pack.shift();
+				if (StringTools.startsWith(pathPart, "_"))
+					continue;
+				if (!Reflect.hasField(currentNode, pathPart)) {
+					Reflect.setField(currentNode, pathPart, {});
+				}
+				currentNode = Reflect.field(currentNode, pathPart);
+			}
+			Reflect.setField(currentNode, globalName, klass);
+		}
+
+		for (key in Reflect.fields(appStructure)) {
+			var value = Reflect.field(appStructure, key);
+			Interp.globals.set(key, value);
+		}
+
+		globalsStructure = appStructure;
+		globalsScopeValue = Reflect.fields(appStructure).length > 0
+			? VariablesPrinter.resolveValue(appStructure)
+			: null;
+	}
+
+	function mergeModuleFields(root:Dynamic, className:String, klass:Class<Dynamic>) {
+		var pack = className.split(".");
+		pack.pop();
+
+		var currentNode = root;
+		for (part in pack) {
+			if (StringTools.startsWith(part, "_"))
+				continue;
+			if (!Reflect.hasField(currentNode, part)) {
+				Reflect.setField(currentNode, part, {});
+			}
+			currentNode = Reflect.field(currentNode, part);
+		}
+
+		for (field in Type.getClassFields(klass)) {
+			try {
+				var val = Reflect.getProperty(klass, field);
+				if (Reflect.isFunction(val))
+					continue;
+				Reflect.setField(currentNode, field, val);
+			} catch (_:Dynamic) {}
+		}
 	}
 
 	function closeSocket() {

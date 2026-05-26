@@ -131,10 +131,11 @@ class VariablesPrinter {
 		}
 	}
 
-	public static function evaluate(parser:Parser, expression:String, threadId:Int, frameId:Int):Null<Variable> {
+	public static function evaluate(parser:Parser, expression:String, threadId:Int, frameId:Int,
+			?moduleGlobals:Dynamic, ?sourceFile:String):Null<Variable> {
 		var result = null;
 		try {
-			var interp = initInterp(threadId, frameId, true);
+			var interp = initInterp(threadId, frameId, true, moduleGlobals, sourceFile);
 			var ast = parser.parseString(expression);
 			var evalRes:Dynamic = interp.execute(ast);
 			result = {
@@ -147,13 +148,15 @@ class VariablesPrinter {
 		return result;
 	}
 
-	public static function initInterp(threadId:Int, frameId:Int, exposeMembers:Bool = false):Interp {
+	public static function initInterp(threadId:Int, frameId:Int, exposeMembers:Bool = false,
+			?moduleGlobals:Dynamic, ?sourceFile:String):Interp {
 		var stackVariables = cpp.vm.Debugger.getStackVariables(threadId, frameId, false);
 		var interp = new Interp();
 		for (vName in stackVariables) {
 			var value = cpp.vm.Debugger.getStackVariableValue(threadId, frameId, vName, false);
 			var klass = Type.getClass(value);
-			interp.variables.set(Type.getClassName(klass), klass);
+			if (klass != null)
+				interp.variables.set(Type.getClassName(klass), klass);
 			if (exposeMembers) {
 				if (vName == "this") {
 					var members = Reflect.fields(value);
@@ -166,7 +169,50 @@ class VariablesPrinter {
 			interp.variables.set(vName, value);
 		}
 
+		injectModuleGlobals(interp, moduleGlobals, sourceFile);
+
 		return interp;
+	}
+
+	static function packageFromSourceFile(sourceFile:String):String {
+		var dir = haxe.io.Path.directory(sourceFile);
+		if (dir == null || dir == "" || dir == ".")
+			return "";
+		return dir.split("/").join(".");
+	}
+
+	static function lookupPackageNode(root:Dynamic, pack:String):Dynamic {
+		if (root == null)
+			return null;
+		if (pack == null || pack == "")
+			return root;
+
+		var node = root;
+		for (part in pack.split(".")) {
+			if (!Reflect.hasField(node, part))
+				return null;
+			node = Reflect.field(node, part);
+		}
+		return node;
+	}
+
+	static function injectModuleGlobals(interp:Interp, moduleGlobals:Dynamic, ?sourceFile:String) {
+		if (moduleGlobals == null || sourceFile == null)
+			return;
+
+		var pack = packageFromSourceFile(sourceFile);
+		var node = lookupPackageNode(moduleGlobals, pack);
+		if (node == null)
+			return;
+
+		for (name in Reflect.fields(node)) {
+			var val = Reflect.field(node, name);
+			if (Std.isOfType(val, Class))
+				continue;
+			if (Reflect.isObject(val) && Type.getClass(val) == null)
+				continue;
+			interp.variables.set(name, val);
+		}
 	}
 
 	static function getClassProps(c:Class<Dynamic>) {
