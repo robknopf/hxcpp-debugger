@@ -1,3 +1,7 @@
+### 1.2.7 (unreleased)
+
+- stopping a launched session now ends the debuggee; before, the adapter exited and left it running
+
 ### 1.2.6 (unreleased)
 
 - fixed stops not showing (the debuggee paused with nothing in VS Code) when the stopped thread was never listed: the main thread's creation is reported before the debug server's handler is set

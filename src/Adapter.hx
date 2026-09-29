@@ -42,6 +42,8 @@ class Adapter extends DebugSession {
 	}
 
 	var connection:Connection;
+	/** The process a launch started; null when attached. **/
+	var debuggee:js.node.child_process.ChildProcess;
 	var postLaunchActions:Array<(Void->Void)->Void>;
 
 	function executePostLaunchActions(callback) {
@@ -90,6 +92,7 @@ class Adapter extends DebugSession {
 		}
 
 		function onExit(_, _) {
+			debuggee = null;
 			sendEvent(new vscode.debugAdapter.DebugSession.TerminatedEvent(false));
 		}
 
@@ -107,11 +110,19 @@ class Adapter extends DebugSession {
 			};
 			if (launchEnv != null)
 				spawnOpts.env = mergeLaunchEnv(launchEnv);
-			var haxeProcess = ChildProcess.spawn(executable, arguments != null ? arguments : [], spawnOpts);
-			haxeProcess.stdout.on(ReadableEvent.Data, onStdout);
-			haxeProcess.stderr.on(ReadableEvent.Data, onStderr);
-			haxeProcess.on(ChildProcessEvent.Exit, onExit);
+			debuggee = ChildProcess.spawn(executable, arguments != null ? arguments : [], spawnOpts);
+			debuggee.stdout.on(ReadableEvent.Data, onStdout);
+			debuggee.stderr.on(ReadableEvent.Data, onStderr);
+			debuggee.on(ChildProcessEvent.Exit, onExit);
 		});
+	}
+
+	// Stop ends what a launch started: the adapter exits either way, and a child it leaves
+	// running keeps going (a window stays open) until it next writes to its closed stdout.
+	override function disconnectRequest(response:DisconnectResponse, args:DisconnectArguments) {
+		if (debuggee != null && (args == null || args.terminateDebuggee != false))
+			debuggee.kill();
+		super.disconnectRequest(response, args);
 	}
 
 	override function attachRequest(response:AttachResponse, args:AttachRequestArguments):Void {
