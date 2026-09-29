@@ -1,3 +1,9 @@
+### 1.2.6 (unreleased)
+
+- fixed stops not showing (the debuggee paused with nothing in VS Code) when the stopped thread was never listed: the main thread's creation is reported before the debug server's handler is set
+- a launch whose port (6972) is in use now fails with an error, instead of the session silently ending
+- (needs hxcpp with the fix) thread exits report the exiting thread instead of -1, so finished threads leave the thread list
+
 ### 1.2.5 (unreleased)
 
 - added CPPIA script breakpoint support (deferred registration when scripts load; hxcpp 4.x via `__hxcpp_dbg_setOnScriptLoadedFunction`, Haxe 5 via `generateFilePathMaps()` on script load — requires hxcpp with ungated script-loaded callback)

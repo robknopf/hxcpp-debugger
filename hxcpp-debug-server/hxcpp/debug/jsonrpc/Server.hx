@@ -583,7 +583,14 @@ class Server {
 				stateMutex.acquire();
 				currentThreadInfo = Debugger.getThreadInfo(threadNumber, false);
 				references.clear();
+				// the main thread's THREAD_CREATED fires before the handler is set, so a thread
+				// can stop without ever being listed: VS Code then can't show the stop
+				var unlisted = !threads.exists(threadNumber);
+				if (unlisted)
+					threads.set(threadNumber, 'Thread${threadNumber}');
 				stateMutex.release();
+				if (unlisted)
+					sendEvent(Protocol.ThreadStart, {threadId: threadNumber});
 
 				if (currentThreadInfo.status == ThreadInfo.STATUS_STOPPED_BREAK_IMMEDIATE) {
 					sendEvent(Protocol.PauseStop, {threadId: threadNumber});

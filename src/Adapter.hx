@@ -7,6 +7,7 @@ import js.node.Net;
 import js.node.ChildProcess;
 import js.node.child_process.ChildProcess.ChildProcessEvent;
 import js.node.net.Socket.SocketEvent;
+import js.node.net.Server.ServerEvent;
 import js.node.stream.Readable.ReadableEvent;
 import hxcpp.debug.jsonrpc.Protocol;
 
@@ -93,6 +94,12 @@ class Adapter extends DebugSession {
 		}
 
 		var server = Net.createServer(onConnected);
+		// unhandled, a listen error kills the adapter and the session silently ends
+		server.on(ServerEvent.Error, function(error:js.lib.Error) {
+			var code:String = (cast error).code;
+			var message = code == "EADDRINUSE" ? "Can't listen on port 6972: it's in use (is a previous debuggee still running?)" : 'Can\'t listen on port 6972: ${error.message}';
+			sendErrorResponse(cast response, 1, message);
+		});
 		server.listen(6972, function() {
 			var spawnOpts:Dynamic = {
 				stdio: Pipe,
